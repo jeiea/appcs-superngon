@@ -6,6 +6,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -14,16 +15,24 @@ namespace SuperNGon
   public partial class Form1 : Form
   {
     int Side = 6;
-    long StartTick;
     PointF Center;
     float CursorAngle;
-    List<Queue<float>> Obstacles;
+    DateTime Start;
+    TimeSpan Last;
+    TimeSpan Record;
+    Dictionary<Keys, bool> KeyStates = new Dictionary<Keys, bool>();
+    List<LinkedList<float>> Obstacles;
+    Task Game;
+    CancellationTokenSource Cancellation;
 
     public Form1()
     {
       ResizeRedraw = true;
       DoubleBuffered = true;
-      CursorAngle = 180 / Side;
+      Obstacles = new List<LinkedList<float>>();
+      for (int i = 0; i < Side; i++)
+        Obstacles.Add(new LinkedList<float>());
+      CursorAngle = (float)Math.Ceiling(60.0 / 360 * Side) * 360 / Side;
       InitializeComponent();
     }
 
@@ -36,24 +45,47 @@ namespace SuperNGon
     protected override void OnPaint(PaintEventArgs e)
     {
       var g = e.Graphics;
-      var tick = DateTime.Now.Ticks - StartTick;
+      var elapsed = Game == null ? Record : DateTime.Now - Start;
 
       var main = g.BeginContainer();
       g.SmoothingMode = SmoothingMode.AntiAlias;
-      g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+      g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
 
-      // Fill transform to 1280x720
+      // Transform to expand 1280x720
       var originAnchor = MatrixAnchor(g);
       g.TranslateTransform(Center.X, Center.Y);
-      float zoom = Math.Min(Center.X / 640, Center.Y/ 360);
+      var transAnchor = MatrixAnchor(g);
+      float zoom = Math.Min(Center.X / 640, Center.Y / 360);
+      if (Game != null)
+      {
+        g.RotateTransform(elapsed.Ticks / 200000f);
+      }
       g.ScaleTransform(zoom, zoom);
 
       FillBackground(g);
 
-      g.DrawRectangle(new Pen(new SolidBrush(Color.White)), new Rectangle(-200, -200, 100, 100));
-      g.DrawString($"SUPER\n   {Side}-GON",
-        new Font("Arial", 30, FontStyle.Bold),
-        new SolidBrush(Color.Red), -200, -200);
+      #region Draw Texts
+      transAnchor(m => m.Scale(zoom, zoom));
+
+      var gothic = new Font("맑은 고딕", 40, FontStyle.Bold);
+      var meterBrush = new SolidBrush(
+        Game == null && Record.Ticks != 0 && Record == Last ||
+        elapsed > Record
+        ? Color.Red
+        : Color.Black);
+      var rankString = string.Format("NEW RECORD: {0:f2}",
+        elapsed > Record ? elapsed.TotalSeconds : Record.TotalSeconds); ;
+      g.DrawString(rankString, gothic, meterBrush, 100, -370);
+      var recordString = string.Format("RECORD: {0:f2}",
+        Game == null ? Record.TotalSeconds : elapsed.TotalSeconds);
+      g.DrawString(recordString, gothic, meterBrush, 230, -310);
+      if (Game == null)
+      {
+        g.DrawString("PRESS SPACE TO START", gothic, new SolidBrush(Color.Black), -340, 290);
+        gothic = new Font("맑은 고딕", 70, FontStyle.Bold);
+        g.DrawString($"SUPER\n   {Side}-GON", gothic, new SolidBrush(Color.White), -350, -320);
+      }
+      #endregion
 
       g.EndContainer(main);
     }
@@ -83,26 +115,33 @@ namespace SuperNGon
       var obsFront = new SolidBrush(new HSBColor(1 / 3f, 1, .9f));
       var briBack = new SolidBrush(new HSBColor(1 / 3f, 1, .7f));
       var drkBack = new SolidBrush(new HSBColor(1 / 3f, 1, .3f));
+      var midBack = new SolidBrush(new HSBColor(1 / 3f, 1, .5f));
+      var whiteBrush = new SolidBrush(Color.White);
+      var whitePen = new Pen(Color.White) { LineJoin = LineJoin.Bevel };
 
       void DrawHolePolygon()
       {
         g.ScaleTransform(0.004f, 0.004f);
-        g.FillPolygon(new SolidBrush(Color.White), triangle);
-        g.DrawPolygon(new Pen(Color.White) { LineJoin = LineJoin.Bevel }, triangle);
+        g.FillPolygon(whiteBrush, triangle);
+        g.DrawPolygon(whitePen, triangle);
       }
       var degreeSide = 360f / Side;
-      for (int i = Side / 2 * 2; i >= 0; i--)
+      var backBrush = Side % 2 == 1 ? midBack : briBack;
+      for (int i = Side - 1; i >= 0; i--)
       {
-        originAnchor(m => m.Rotate(degreeSide * i));
-        g.FillPolygon(i % 2 == 0 ? briBack : drkBack, triangle);
+        originAnchor(m => m.Rotate(degreeSide * (i + 0.5f)));
+        var rotAnchor = MatrixAnchor(g);
+        g.FillPolygon(backBrush, triangle);
+        var isWall = true;
+        foreach (var wall in Obstacles[i].Reverse())
+        {
+          rotAnchor(m => m.Scale(wall, wall));
+          //g.ScaleTransform(s, s);
+          g.FillPolygon(isWall ? obsFront : backBrush, triangle);
+          isWall = !isWall;
+        }
         DrawHolePolygon();
-      }
-      if (Side % 2 == 1)
-      {
-        originAnchor(m => m.Rotate(-360f / Side));
-        var midBack = new SolidBrush(new HSBColor(1 / 3f, 1, .5f));
-        g.FillPolygon(midBack, triangle);
-        DrawHolePolygon();
+        backBrush = i % 2 == 0 ? briBack : drkBack;
       }
 
       originAnchor(m => m.Rotate(CursorAngle));
@@ -112,23 +151,102 @@ namespace SuperNGon
       originAnchor();
     }
 
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+      KeyStates[e.KeyCode] = false;
+    }
+
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+      bool handled = Game == null ? OnTitleKey(keyData) : OnGameKey(keyData);
+      return handled ? true : base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    private bool OnGameKey(Keys keyData)
+    {
+      switch (keyData)
+      {
+        case Keys.Left:
+          KeyStates[Keys.Left] = true;
+          return true;
+        case Keys.Right:
+          KeyStates[Keys.Right] = true;
+          return true;
+        case Keys.Escape:
+          Cancellation.Cancel();
+          Game = null;
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    private bool OnTitleKey(Keys keyData)
     {
       switch (keyData)
       {
         case Keys.Up:
           Side = Math.Min(100, Side + 1);
-          CursorAngle = 180 / Side;
+          CursorAngle = (float)Math.Ceiling(60.0 / 360 * Side) * 360 / Side;
+          Obstacles.Add(new LinkedList<float>());
           Invalidate();
           return true;
         case Keys.Down:
           Side = Math.Max(3, Side - 1);
-          CursorAngle = 180 / Side;
+          CursorAngle = (float)Math.Ceiling(60.0 / 360 * Side) * 360 / Side;
+          Obstacles.RemoveAt(Obstacles.Count - 1);
           Invalidate();
+          return true;
+        case Keys.Space:
+          if (Game != null) return false;
+          Cancellation = new CancellationTokenSource();
+          Start = DateTime.Now;
+          Game = new Task(DoGame, Cancellation.Token);
+          Game.Start();
           return true;
         default:
           return false;
       }
+    }
+
+    async void DoGame()
+    {
+      var r = new Random();
+      var token = Cancellation.Token;
+      while (!token.IsCancellationRequested)
+      {
+        for (int i = Obstacles.Sum(x => x.Count); i < 6; i++)
+        {
+          var col = r.Next(0, Obstacles.Count - 1);
+          Obstacles[col].AddLast(1);
+          Obstacles[col].AddLast((float)(1 + r.NextDouble() * 0.3));
+        }
+        for (int i = 0; i < Obstacles.Count; i++)
+        {
+          for (var node = Obstacles[i].First; node != null; node = node.Next)
+          {
+            node.Value -= 0.04f;
+          }
+        }
+        foreach (var obs in Obstacles)
+        {
+          while (obs.Count != 0 && obs.First.Value < 0)
+            obs.RemoveFirst();
+        }
+        if (KeyStates.TryGetValue(Keys.Left, out bool pressing) && pressing)
+        {
+          CursorAngle -= 5;
+        }
+        if (KeyStates.TryGetValue(Keys.Right, out bool pressing2) && pressing2)
+        {
+          CursorAngle += 5;
+        }
+        Invalidate();
+        await Task.Delay(16);
+      }
+      Last = DateTime.Now - Start;
+      if (Record < Last) Record = Last;
+      Invalidate();
     }
   }
 }
