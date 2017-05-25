@@ -77,8 +77,8 @@ namespace SuperNGon
         elapsed > Record ? elapsed.TotalSeconds : Record.TotalSeconds); ;
       g.DrawString(rankString, gothic, meterBrush, 100, -370);
       var recordString = string.Format("RECORD: {0:f2}",
-        Game == null ? Record.TotalSeconds : elapsed.TotalSeconds);
-      g.DrawString(recordString, gothic, meterBrush, 230, -310);
+        Game == null ? Last.TotalSeconds : elapsed.TotalSeconds);
+      g.DrawString(recordString, gothic, meterBrush, 248, -310);
       if (Game == null)
       {
         g.DrawString("PRESS SPACE TO START", gothic, new SolidBrush(Color.Black), -340, 290);
@@ -107,7 +107,8 @@ namespace SuperNGon
       var r = Math.Sqrt(Math.Pow(Center.X, 2) + Math.Pow(Center.Y, 2));
       var top = new PointF(0, -20000);
       // TODO: Initial rotation by window ratio
-      var rot = top.Rotate(2 * Math.PI / Side);
+      var angle = 2 * Math.PI / Side;
+      var rot = top.Rotate(angle);
       var triangle = new PointF[] { new PointF(), top, rot };
 
       var originAnchor = MatrixAnchor(g);
@@ -117,33 +118,35 @@ namespace SuperNGon
       var drkBack = new SolidBrush(new HSBColor(1 / 3f, 1, .3f));
       var midBack = new SolidBrush(new HSBColor(1 / 3f, 1, .5f));
       var whiteBrush = new SolidBrush(Color.White);
-      var whitePen = new Pen(Color.White) { LineJoin = LineJoin.Bevel };
+      var whitePen = new Pen(Color.White, 500) { LineJoin = LineJoin.Bevel };
 
-      void DrawHolePolygon()
-      {
-        g.ScaleTransform(0.004f, 0.004f);
-        g.FillPolygon(whiteBrush, triangle);
-        g.DrawPolygon(whitePen, triangle);
-      }
       var degreeSide = 360f / Side;
       var backBrush = Side % 2 == 1 ? midBack : briBack;
       for (int i = Side - 1; i >= 0; i--)
       {
+        // Rotate and draw background
         originAnchor(m => m.Rotate(degreeSide * (i + 0.5f)));
-        var rotAnchor = MatrixAnchor(g);
         g.FillPolygon(backBrush, triangle);
-        var isWall = true;
-        foreach (var wall in Obstacles[i].Reverse())
+
+        // Draw obstacles
+        var poly = new List<PointF>();
+        foreach (var wallRatio in Obstacles[i].Reverse())
         {
-          rotAnchor(m => m.Scale(wall, wall));
-          //g.ScaleTransform(s, s);
-          g.FillPolygon(isWall ? obsFront : backBrush, triangle);
-          isWall = !isWall;
+          var wall = new PointF(0, -2000 * wallRatio);
+          poly.AddRange(new[] { new PointF(), wall, wall.Rotate(angle) });
         }
-        DrawHolePolygon();
+        if (poly.Count > 0) g.FillPolygon(obsFront, poly.ToArray());
+
+        // Draw center hexagon
+        g.ScaleTransform(0.004f, 0.004f);
+        g.FillPolygon(whiteBrush, triangle);
+        g.DrawPolygon(whitePen, triangle);
+
+        // abandon third color
         backBrush = i % 2 == 0 ? briBack : drkBack;
       }
 
+      // Draw cursor
       originAnchor(m => m.Rotate(CursorAngle));
       float bot = -100, tip = 130, wid = 17.32f;
       var cursor = new PointF[] { new PointF(0, -tip), new PointF(-wid, bot), new PointF(wid, bot) };
@@ -246,6 +249,7 @@ namespace SuperNGon
       }
       Last = DateTime.Now - Start;
       if (Record < Last) Record = Last;
+      foreach (var obs in Obstacles) obs.Clear();
       Invalidate();
     }
   }
