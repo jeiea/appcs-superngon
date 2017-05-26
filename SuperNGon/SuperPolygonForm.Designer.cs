@@ -1,6 +1,6 @@
 ﻿namespace SuperNGon
 {
-  partial class Form1
+  partial class SuperPolygonForm
   {
     /// <summary>
     /// Required designer variable.

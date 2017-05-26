@@ -13,7 +13,7 @@ using System.Windows.Forms;
 
 namespace SuperNGon
 {
-  public partial class Form1 : Form
+  public partial class SuperPolygonForm : Form
   {
     const int MaxSide = 100;
     int Side = 6;
@@ -24,31 +24,30 @@ namespace SuperNGon
     TimeSpan Record;
     Func<float> GetRotation;
     Func<float> GetExpansion;
-    List<SortedSet<float>> Obstacles;
-    float Offset;
+    Queue<Wall> Walls = new Queue<Wall>();
     Task Game;
     CancellationTokenSource Cancellation;
 
     class Wall
     {
-      float Length;
-      bool[] Exist = new bool[MaxSide];
+      public float Length;
+      public bool[] Exist = new bool[MaxSide];
     }
 
-    public Form1()
+    public SuperPolygonForm()
     {
       ResizeRedraw = true;
       DoubleBuffered = true;
-      Obstacles = new List<SortedSet<float>>();
-      for (int i = 0; i < 100; i++)
-        Obstacles.Add(new SortedSet<float>());
-      Preparation();
+      Text = "SuperNGon";
+      for (int i = 0; i < 50; i++)
+        Walls.Enqueue(new Wall());
+      SideNumPreparation();
       InitializeComponent();
     }
 
-    private void Preparation()
+    private void SideNumPreparation()
     {
-      foreach (var list in Obstacles) list.Clear();
+      foreach (var w in Walls) w.Length = 0;
       CursorAngle = (float)Math.Ceiling(60.0 / 360 * Side) * 360 / Side - 180 / Side;
       GetRotation = () => 180 / Side;
       GetExpansion = () => 1;
@@ -165,12 +164,15 @@ namespace SuperNGon
       {
         // Charge obstacles
         var pt = new PointF(0, -1).Rotate(i * angle);
-        foreach (var px in Obstacles[i].Reverse())
+        float sum = 0;
+        foreach (var wall in Walls)
         {
-          var wall = new PointF(pt.X * (px - Offset), pt.Y * (px - Offset));
+          sum += wall.Length;
+          if (!wall.Exist[Side]) continue;
+          var upside = new PointF(pt.X * sum, pt.Y * sum);
           walls.Add(new PointF());
-          walls.Add(wall);
-          walls.Add(wall.Rotate(angle));
+          walls.Add(upside);
+          walls.Add(upside.Rotate(angle));
         }
       }
       if (walls.Count > 0)
@@ -207,12 +209,11 @@ namespace SuperNGon
           Side = keyData == Keys.Up
             ? Math.Min(MaxSide, Side + 1)
             : Math.Max(3, Side - 1);
-          Preparation();
+          SideNumPreparation();
           Invalidate();
           return true;
         case Keys.Space:
           if (Game != null) break;
-          Preparation();
           Cancellation = new CancellationTokenSource();
           Start = DateTime.Now;
           Game = new Task(DoGame, Cancellation.Token);
@@ -230,31 +231,31 @@ namespace SuperNGon
       var r = new Random();
       var token = Cancellation.Token;
       var rotTime = DateTime.Now;
+      var branch = new int[Side];
+
+      // Insert starting term relax
+      var firstWall = Walls.Dequeue();
+      firstWall.Length = 900;
+      Walls.Enqueue(firstWall);
+
       while (!token.IsCancellationRequested)
       {
-        // Generate walls
-        for (int i = Obstacles.Sum(x => x.Count); i < 6; i++)
+        // Recycle and move walls
+        while (Walls.Peek().Length <= 0)
         {
-          float beg, end;
-          var col = Obstacles[r.Next(0, Side)];
-          do { beg = (float)r.NextDouble() * 500 + 1000 + Offset; } while (col.Contains(beg));
-          do { end = (float)r.NextDouble() * 400 + 100 + beg; } while (col.Contains(end));
-          col.Add(beg);
-          col.Add(end);
+          var recycle = Walls.Dequeue();
+          recycle.Length = (float)r.NextDouble() * 400 + 100;
+          Walls.Enqueue(recycle);
         }
-        // Move and delete walls
-        Offset += 20;
-        foreach (var col in Obstacles)
-        {
-          col.GetViewBetween(float.MinValue, Offset).ToArray()
-            .Select(x => col.Remove(x)).ToArray();
-        }
-        // Move cursor
+        Walls.Peek().Length -= 20;
+
+        // Move cursor and test collision
         if ((GetKeyState(Keys.Left) & 0x8000) != 0)
           CursorAngle = (CursorAngle + 350) % 360;
         if ((GetKeyState(Keys.Right) & 0x8000) != 0)
           CursorAngle = (CursorAngle + 10) % 360;
         if (IsColliding()) break;
+
         // Change rotation and beat
         if (rotTime < DateTime.Now)
         {
@@ -272,6 +273,7 @@ namespace SuperNGon
           };
           rotTime = flag + TimeSpan.FromSeconds(r.Next(5, 10));
         }
+
         // Update
         Invalidate();
         await Task.Delay(16);
@@ -284,18 +286,19 @@ namespace SuperNGon
       Invalidate();
       MessageBox.Show($"기록: {Last}");
       Game = null;
-      Preparation();
+      SideNumPreparation();
       Invalidate();
     }
 
+    int CursorIdx { get { return (int)(CursorAngle / (360f / Side)); } }
+
     private bool IsColliding()
     {
-      var stepping = Obstacles[(int)(CursorAngle / (360f / Side))];
-      var filled = stepping.Count % 2 == 1;
-      foreach (var wall in stepping)
+      float radius = 0;
+      foreach (var wall in Walls)
       {
-        if (wall - Offset > 130) return filled;
-        filled = !filled;
+        radius += wall.Length;
+        if (radius > 130) return wall.Exist[CursorIdx];
       }
       return false;
     }
