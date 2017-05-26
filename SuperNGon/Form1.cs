@@ -20,6 +20,8 @@ namespace SuperNGon
     DateTime Start;
     TimeSpan Last;
     TimeSpan Record;
+    Func<float> GetRotation;
+    Func<float> GetExpansion;
     Dictionary<Keys, bool> KeyStates = new Dictionary<Keys, bool>();
     List<LinkedList<float>> Obstacles;
     Task Game;
@@ -30,10 +32,18 @@ namespace SuperNGon
       ResizeRedraw = true;
       DoubleBuffered = true;
       Obstacles = new List<LinkedList<float>>();
-      for (int i = 0; i < Side; i++)
+      for (int i = 0; i < 100; i++)
         Obstacles.Add(new LinkedList<float>());
-      CursorAngle = (float)Math.Ceiling(60.0 / 360 * Side) * 360 / Side;
+      Preparation();
       InitializeComponent();
+    }
+
+    private void Preparation()
+    {
+      foreach (var list in Obstacles) list.Clear();
+      CursorAngle = (float)Math.Ceiling(60.0 / 360 * Side) * 360 / Side;
+      GetRotation = () => 0;
+      GetExpansion = () => 1;
     }
 
     protected override void OnResize(EventArgs e)
@@ -45,7 +55,6 @@ namespace SuperNGon
     protected override void OnPaint(PaintEventArgs e)
     {
       var g = e.Graphics;
-      var elapsed = Game == null ? Record : DateTime.Now - Start;
 
       var main = g.BeginContainer();
       g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -58,7 +67,7 @@ namespace SuperNGon
       float zoom = Math.Min(Center.X / 640, Center.Y / 360);
       if (Game != null)
       {
-        g.RotateTransform(elapsed.Ticks / 200000f);
+        g.RotateTransform(GetRotation());
       }
       g.ScaleTransform(zoom, zoom);
 
@@ -67,6 +76,7 @@ namespace SuperNGon
       #region Draw Texts
       transAnchor(m => m.Scale(zoom, zoom));
 
+      var elapsed = Game == null ? Record : DateTime.Now - Start;
       var gothic = new Font("맑은 고딕", 40, FontStyle.Bold);
       var meterBrush = new SolidBrush(
         Game == null && Record.Ticks != 0 && Record == Last ||
@@ -104,62 +114,81 @@ namespace SuperNGon
 
     private void FillBackground(Graphics g)
     {
-      var r = Math.Sqrt(Math.Pow(Center.X, 2) + Math.Pow(Center.Y, 2));
-      var angle = 2 * Math.PI / Side;
-      var top = new PointF(0, -80);
-      var rot = top.Rotate(angle);
-      var triangle = new PointF[] { new PointF(), top, rot };
-      var spike = new PointF[] { top, new PointF(), rot };
-
       var originAnchor = MatrixAnchor(g);
 
-      var obsFront = new SolidBrush(new HSBColor(1 / 3f, 1, .9f));
+      #region Drawing resources
+      var angle = 2 * Math.PI / Side;
+      var shineBrush = new SolidBrush(new HSBColor(1 / 3f, 1, .9f));
       var briBack = new SolidBrush(new HSBColor(1 / 3f, 1, .7f));
       var drkBack = new SolidBrush(new HSBColor(1 / 3f, 1, .3f));
-      var midBack = new SolidBrush(new HSBColor(1 / 3f, 1, .5f));
       var whiteBrush = new SolidBrush(Color.White);
-      var whitePen = new Pen(obsFront, 1500) { LineJoin = LineJoin.Round };
-      var darkPen = new Pen(drkBack, 500) { LineJoin = LineJoin.Bevel };
+      var shinePen = new Pen(shineBrush, 3) { LineJoin = LineJoin.Round };
+      var darkPen = new Pen(drkBack, 3) { LineJoin = LineJoin.Bevel };
+      #endregion
 
-      var degreeSide = 360f / Side;
-      var backBrush = Side % 2 == 1 ? midBack : briBack;
-      for (int i = Side - 1; i >= 0; i--)
+      #region Draw background
+      var outop = new PointF(0, -20000);
+      var chordDots = Enumerable.Range(0, Side + 1)
+        .Select(i => outop.Rotate(angle * i)).ToArray();
+      PointF[] GetFan(int c)
       {
-        // Rotate and draw background
-        originAnchor(m => m.Rotate(degreeSide * (i + 0.5f)));
-        g.FillPolygon(backBrush, new PointF[] { });
-
-        // Draw obstacles
-        var poly = new List<PointF>();
-        foreach (var wallRatio in Obstacles[i].Reverse())
+        var vs = new List<PointF>();
+        for (int i = c; i < Side; i += 2)
         {
-          var wall = new PointF(0, -2000 * wallRatio);
-          poly.AddRange(new[] { new PointF(), wall, wall.Rotate(angle) });
+          vs.Add(new PointF());
+          vs.Add(chordDots[i]);
+          vs.Add(chordDots[i + 1]);
         }
-        if (poly.Count > 0) g.FillPolygon(obsFront, poly.ToArray());
-
-        // Draw center hexagon
-        g.ScaleTransform(0.004f, 0.004f);
-        g.FillPolygon(drkBack, triangle);
-        g.DrawLines(darkPen, spike);
-        //g.DrawLine(whitePen, top, rot);
-
-        // abandon third color
-        backBrush = i % 2 == 0 ? briBack : drkBack;
+        return vs.ToArray();
       }
+      g.FillPolygon(briBack, GetFan(0));
+      g.FillPolygon(drkBack, GetFan(1));
+      if (Side % 2 == 1)
+      {
+        var midBack = new SolidBrush(new HSBColor(1 / 3f, 1, .5f));
+        g.FillPolygon(midBack, new[] {
+          new PointF(),
+          chordDots[chordDots.Length - 2],
+          chordDots[chordDots.Length - 1]
+        });
+      }
+      #endregion
 
-      originAnchor();
-      var inner = new PointF(0, -80);
-      g.DrawLines(whitePen, Enumerable.Range(0, Side).Select(i => inner.Rotate(angle * i)).ToArray());
+      #region Draw obstacles
+      var walls = new List<PointF>();
+      for (int i = 0; i < Side; i++)
+      {
+        // Charge obstacles
+        var pt = new PointF(0, -1).Rotate(i * angle);
+        foreach (var px in Obstacles[i].Reverse())
+        {
+          var wall = new PointF(pt.X * px, pt.Y * px);
+          walls.Add(new PointF());
+          walls.Add(wall);
+          walls.Add(wall.Rotate(angle));
+        }
+      }
+      if (walls.Count > 0)
+        g.FillPolygon(shineBrush, walls.ToArray());
+      #endregion
 
-      // Draw cursor
+      #region Draw center polygon
+      var intop = new PointF(0, -83 * GetExpansion());
+      var center = Enumerable.Range(0, Side + 1).Select(i => intop.Rotate(angle * i)).ToArray();
+      g.FillPolygon(drkBack, center);
+      g.DrawLines(shinePen, center);
+      #endregion
+
+      #region Draw cursor
       originAnchor(m => m.Rotate(CursorAngle));
-      float bot = -100, tip = 130, wid = 17.32f;
+      float bot = -100, tip = 120, wid = 11.55f;
       var cursor = new PointF[] { new PointF(0, -tip), new PointF(-wid, bot), new PointF(wid, bot) };
       g.FillPolygon(new SolidBrush(Color.LawnGreen), cursor);
       originAnchor();
+      #endregion
     }
 
+    #region Handle key input
     protected override void OnKeyUp(KeyEventArgs e)
     {
       KeyStates[e.KeyCode] = false;
@@ -196,14 +225,12 @@ namespace SuperNGon
       {
         case Keys.Up:
           Side = Math.Min(100, Side + 1);
-          CursorAngle = (float)Math.Ceiling(60.0 / 360 * Side) * 360 / Side;
-          Obstacles.Add(new LinkedList<float>());
+          Preparation();
           Invalidate();
           return true;
         case Keys.Down:
           Side = Math.Max(3, Side - 1);
-          CursorAngle = (float)Math.Ceiling(60.0 / 360 * Side) * 360 / Side;
-          Obstacles.RemoveAt(Obstacles.Count - 1);
+          Preparation();
           Invalidate();
           return true;
         case Keys.Space:
@@ -217,42 +244,59 @@ namespace SuperNGon
           return false;
       }
     }
+    #endregion
 
     async void DoGame()
     {
       var r = new Random();
       var token = Cancellation.Token;
+      var rotTime = DateTime.Now;
       while (!token.IsCancellationRequested)
       {
+        // Generate walls
         for (int i = Obstacles.Sum(x => x.Count); i < 6; i++)
         {
           var col = r.Next(0, Obstacles.Count - 1);
-          Obstacles[col].AddLast(1);
-          Obstacles[col].AddLast((float)(1 + r.NextDouble() * 0.3));
+          var pos = r.Next(1500, 2000);
+          var len = r.Next(100, 500);
+          Obstacles[col].AddLast(pos);
+          Obstacles[col].AddLast(pos + len);
         }
+        // Move walls
         for (int i = 0; i < Obstacles.Count; i++)
-        {
           for (var node = Obstacles[i].First; node != null; node = node.Next)
-          {
-            node.Value -= 0.04f;
-          }
-        }
-        foreach (var obs in Obstacles)
-        {
-          while (obs.Count != 0 && obs.First.Value < 0)
-            obs.RemoveFirst();
-        }
+            node.Value -= 20f;
+        // Delete walls
+        foreach (var walls in Obstacles)
+          while ((walls.First?.Value ?? 1) < 0)
+            walls.RemoveFirst();
+        // Move cursor
         if (KeyStates.TryGetValue(Keys.Left, out bool pressing) && pressing)
-        {
-          CursorAngle -= 5;
-        }
+          CursorAngle -= 10;
         if (KeyStates.TryGetValue(Keys.Right, out bool pressing2) && pressing2)
+          CursorAngle += 10;
+        // Change rotation and beat
+        if (rotTime < DateTime.Now)
         {
-          CursorAngle += 5;
+          var flag = DateTime.Now;
+          float past = GetRotation();
+          float rand = (float)r.NextDouble();
+          float delta = (rand * 90 + 90) * (r.Next(2) == 0 ? -1 : 1);
+          GetRotation = () => past + (float)(DateTime.Now - flag).TotalSeconds * delta;
+          var interval = (float)(1 - rand * 0.6);
+          GetExpansion = () =>
+          {
+            var e = (float)(DateTime.Now - flag).TotalSeconds % interval;
+            e = (interval - e) / interval * 0.2f + 0.9f;
+            return e * e;
+          };
+          rotTime = flag + TimeSpan.FromSeconds(r.Next(5, 10));
         }
+        // Update
         Invalidate();
         await Task.Delay(16);
       }
+      // Game finished
       Last = DateTime.Now - Start;
       if (Record < Last) Record = Last;
       foreach (var obs in Obstacles) obs.Clear();
