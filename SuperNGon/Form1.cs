@@ -5,6 +5,7 @@ using System.Data;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,6 +15,7 @@ namespace SuperNGon
 {
   public partial class Form1 : Form
   {
+    const int MaxSide = 100;
     int Side = 6;
     PointF Center;
     float CursorAngle;
@@ -22,18 +24,24 @@ namespace SuperNGon
     TimeSpan Record;
     Func<float> GetRotation;
     Func<float> GetExpansion;
-    Dictionary<Keys, bool> KeyStates = new Dictionary<Keys, bool>();
-    List<LinkedList<float>> Obstacles;
+    List<SortedSet<float>> Obstacles;
+    float Offset;
     Task Game;
     CancellationTokenSource Cancellation;
+
+    class Wall
+    {
+      float Length;
+      bool[] Exist = new bool[MaxSide];
+    }
 
     public Form1()
     {
       ResizeRedraw = true;
       DoubleBuffered = true;
-      Obstacles = new List<LinkedList<float>>();
+      Obstacles = new List<SortedSet<float>>();
       for (int i = 0; i < 100; i++)
-        Obstacles.Add(new LinkedList<float>());
+        Obstacles.Add(new SortedSet<float>());
       Preparation();
       InitializeComponent();
     }
@@ -41,8 +49,8 @@ namespace SuperNGon
     private void Preparation()
     {
       foreach (var list in Obstacles) list.Clear();
-      CursorAngle = (float)Math.Ceiling(60.0 / 360 * Side) * 360 / Side;
-      GetRotation = () => 0;
+      CursorAngle = (float)Math.Ceiling(60.0 / 360 * Side) * 360 / Side - 180 / Side;
+      GetRotation = () => 180 / Side;
       GetExpansion = () => 1;
     }
 
@@ -65,10 +73,7 @@ namespace SuperNGon
       g.TranslateTransform(Center.X, Center.Y);
       var transAnchor = MatrixAnchor(g);
       float zoom = Math.Min(Center.X / 640, Center.Y / 360);
-      if (Game != null)
-      {
-        g.RotateTransform(GetRotation());
-      }
+      g.RotateTransform(GetRotation());
       g.ScaleTransform(zoom, zoom);
 
       FillBackground(g);
@@ -162,7 +167,7 @@ namespace SuperNGon
         var pt = new PointF(0, -1).Rotate(i * angle);
         foreach (var px in Obstacles[i].Reverse())
         {
-          var wall = new PointF(pt.X * px, pt.Y * px);
+          var wall = new PointF(pt.X * (px - Offset), pt.Y * (px - Offset));
           walls.Add(new PointF());
           walls.Add(wall);
           walls.Add(wall.Rotate(angle));
@@ -188,63 +193,37 @@ namespace SuperNGon
       #endregion
     }
 
-    #region Handle key input
-    protected override void OnKeyUp(KeyEventArgs e)
-    {
-      KeyStates[e.KeyCode] = false;
-    }
-
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-      bool handled = Game == null ? OnTitleKey(keyData) : OnGameKey(keyData);
-      return handled ? true : base.ProcessCmdKey(ref msg, keyData);
-    }
-
-    private bool OnGameKey(Keys keyData)
-    {
       switch (keyData)
       {
-        case Keys.Left:
-          KeyStates[Keys.Left] = true;
-          return true;
-        case Keys.Right:
-          KeyStates[Keys.Right] = true;
-          return true;
         case Keys.Escape:
+          if (Game == null) break;
           Cancellation.Cancel();
-          Game = null;
           return true;
-        default:
-          return false;
-      }
-    }
-
-    private bool OnTitleKey(Keys keyData)
-    {
-      switch (keyData)
-      {
         case Keys.Up:
-          Side = Math.Min(100, Side + 1);
-          Preparation();
-          Invalidate();
-          return true;
         case Keys.Down:
-          Side = Math.Max(3, Side - 1);
+          if (Game != null) break;
+          Side = keyData == Keys.Up
+            ? Math.Min(MaxSide, Side + 1)
+            : Math.Max(3, Side - 1);
           Preparation();
           Invalidate();
           return true;
         case Keys.Space:
-          if (Game != null) return false;
+          if (Game != null) break;
+          Preparation();
           Cancellation = new CancellationTokenSource();
           Start = DateTime.Now;
           Game = new Task(DoGame, Cancellation.Token);
           Game.Start();
           return true;
-        default:
-          return false;
       }
+      return base.ProcessCmdKey(ref msg, keyData);
     }
-    #endregion
+
+    [DllImport("USER32.dll")]
+    static extern short GetKeyState(Keys nVirtKey);
 
     async void DoGame()
     {
@@ -256,25 +235,26 @@ namespace SuperNGon
         // Generate walls
         for (int i = Obstacles.Sum(x => x.Count); i < 6; i++)
         {
-          var col = r.Next(0, Obstacles.Count - 1);
-          var pos = r.Next(1500, 2000);
-          var len = r.Next(100, 500);
-          Obstacles[col].AddLast(pos);
-          Obstacles[col].AddLast(pos + len);
+          float beg, end;
+          var col = Obstacles[r.Next(0, Side)];
+          do { beg = (float)r.NextDouble() * 500 + 1000 + Offset; } while (col.Contains(beg));
+          do { end = (float)r.NextDouble() * 400 + 100 + beg; } while (col.Contains(end));
+          col.Add(beg);
+          col.Add(end);
         }
-        // Move walls
-        for (int i = 0; i < Obstacles.Count; i++)
-          for (var node = Obstacles[i].First; node != null; node = node.Next)
-            node.Value -= 20f;
-        // Delete walls
-        foreach (var walls in Obstacles)
-          while ((walls.First?.Value ?? 1) < 0)
-            walls.RemoveFirst();
+        // Move and delete walls
+        Offset += 20;
+        foreach (var col in Obstacles)
+        {
+          col.GetViewBetween(float.MinValue, Offset).ToArray()
+            .Select(x => col.Remove(x)).ToArray();
+        }
         // Move cursor
-        if (KeyStates.TryGetValue(Keys.Left, out bool pressing) && pressing)
-          CursorAngle -= 10;
-        if (KeyStates.TryGetValue(Keys.Right, out bool pressing2) && pressing2)
-          CursorAngle += 10;
+        if ((GetKeyState(Keys.Left) & 0x8000) != 0)
+          CursorAngle = (CursorAngle + 350) % 360;
+        if ((GetKeyState(Keys.Right) & 0x8000) != 0)
+          CursorAngle = (CursorAngle + 10) % 360;
+        if (IsColliding()) break;
         // Change rotation and beat
         if (rotTime < DateTime.Now)
         {
@@ -297,10 +277,27 @@ namespace SuperNGon
         await Task.Delay(16);
       }
       // Game finished
+      var lastRot = GetRotation();
+      GetRotation = () => lastRot;
       Last = DateTime.Now - Start;
       if (Record < Last) Record = Last;
-      foreach (var obs in Obstacles) obs.Clear();
       Invalidate();
+      MessageBox.Show($"기록: {Last}");
+      Game = null;
+      Preparation();
+      Invalidate();
+    }
+
+    private bool IsColliding()
+    {
+      var stepping = Obstacles[(int)(CursorAngle / (360f / Side))];
+      var filled = stepping.Count % 2 == 1;
+      foreach (var wall in stepping)
+      {
+        if (wall - Offset > 130) return filled;
+        filled = !filled;
+      }
+      return false;
     }
   }
 }
