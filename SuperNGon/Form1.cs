@@ -105,11 +105,11 @@ namespace SuperNGon
     private void FillBackground(Graphics g)
     {
       var r = Math.Sqrt(Math.Pow(Center.X, 2) + Math.Pow(Center.Y, 2));
-      var top = new PointF(0, -20000);
-      // TODO: Initial rotation by window ratio
       var angle = 2 * Math.PI / Side;
+      var top = new PointF(0, -80);
       var rot = top.Rotate(angle);
       var triangle = new PointF[] { new PointF(), top, rot };
+      var spike = new PointF[] { top, new PointF(), rot };
 
       var originAnchor = MatrixAnchor(g);
 
@@ -118,7 +118,8 @@ namespace SuperNGon
       var drkBack = new SolidBrush(new HSBColor(1 / 3f, 1, .3f));
       var midBack = new SolidBrush(new HSBColor(1 / 3f, 1, .5f));
       var whiteBrush = new SolidBrush(Color.White);
-      var whitePen = new Pen(Color.White, 500) { LineJoin = LineJoin.Bevel };
+      var whitePen = new Pen(obsFront, 1500) { LineJoin = LineJoin.Round };
+      var darkPen = new Pen(drkBack, 500) { LineJoin = LineJoin.Bevel };
 
       var degreeSide = 360f / Side;
       var backBrush = Side % 2 == 1 ? midBack : briBack;
@@ -126,7 +127,7 @@ namespace SuperNGon
       {
         // Rotate and draw background
         originAnchor(m => m.Rotate(degreeSide * (i + 0.5f)));
-        g.FillPolygon(backBrush, triangle);
+        g.FillPolygon(backBrush, new PointF[] { });
 
         // Draw obstacles
         var poly = new List<PointF>();
@@ -139,12 +140,17 @@ namespace SuperNGon
 
         // Draw center hexagon
         g.ScaleTransform(0.004f, 0.004f);
-        g.FillPolygon(whiteBrush, triangle);
-        g.DrawPolygon(whitePen, triangle);
+        g.FillPolygon(drkBack, triangle);
+        g.DrawLines(darkPen, spike);
+        //g.DrawLine(whitePen, top, rot);
 
         // abandon third color
         backBrush = i % 2 == 0 ? briBack : drkBack;
       }
+
+      originAnchor();
+      var inner = new PointF(0, -80);
+      g.DrawLines(whitePen, Enumerable.Range(0, Side).Select(i => inner.Rotate(angle * i)).ToArray());
 
       // Draw cursor
       originAnchor(m => m.Rotate(CursorAngle));
