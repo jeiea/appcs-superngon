@@ -37,13 +37,13 @@ namespace SuperNGon
 
     public SuperPolygonForm()
     {
-      ResizeRedraw = true;
-      DoubleBuffered = true;
-      Text = "SuperNGon";
       for (int i = 0; i < 50; i++)
         Walls.Enqueue(new Wall());
       SideNumPreparation();
       InitializeComponent();
+      ResizeRedraw = true;
+      DoubleBuffered = true;
+      Text = "SuperNGon";
       ClientSize = new Size(760, 760);
     }
 
@@ -133,7 +133,7 @@ namespace SuperNGon
       #endregion
 
       #region Draw background
-      var outop = new PointF(0, -20000);
+      var outop = new PointF(0, -2000);
       var chordDots = Enumerable.Range(0, Side + 1)
         .Select(i => outop.Rotate(angle * i)).ToArray();
       PointF[] GetFan(int c)
@@ -181,6 +181,7 @@ namespace SuperNGon
           walls.Add(inside.Rotate(angle));
           walls.Add(inside);
           walls.Add(new PointF());
+          if (sum > 1500) break;
         }
       }
       if (walls.Count > 0)
@@ -305,7 +306,7 @@ namespace SuperNGon
 
         // Update
         Invalidate();
-        await Task.Delay(16);
+        await Task.Delay(16).ConfigureAwait(false);
       }
       // Game finished
       var lastRot = GetRotation();

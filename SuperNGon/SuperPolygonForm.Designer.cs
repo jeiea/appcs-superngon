@@ -30,13 +30,10 @@
     {
       this.SuspendLayout();
       // 
-      // Form1
+      // SuperPolygonForm
       // 
       this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 12F);
       this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-      this.ClientSize = new System.Drawing.Size(1264, 681);
-      this.Name = "Form1";
-      this.Text = "Form1";
       this.ResumeLayout(false);
 
     }
