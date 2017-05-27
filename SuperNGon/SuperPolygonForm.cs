@@ -24,6 +24,7 @@ namespace SuperNGon
     TimeSpan Record;
     Func<float> GetRotation;
     Func<float> GetExpansion;
+    Func<float> GetHue;
     Queue<Wall> Walls = new Queue<Wall>();
     Task Game;
     CancellationTokenSource Cancellation;
@@ -43,6 +44,7 @@ namespace SuperNGon
         Walls.Enqueue(new Wall());
       SideNumPreparation();
       InitializeComponent();
+      ClientSize = new Size(760, 760);
     }
 
     private void SideNumPreparation()
@@ -51,6 +53,7 @@ namespace SuperNGon
       CursorAngle = (float)Math.Ceiling(60.0 / 360 * Side) * 360 / Side - 180 / Side;
       GetRotation = () => 180 / Side;
       GetExpansion = () => 1;
+      GetHue = () => 1 / 3f;
     }
 
     protected override void OnResize(EventArgs e)
@@ -122,12 +125,11 @@ namespace SuperNGon
 
       #region Drawing resources
       var angle = 2 * Math.PI / Side;
-      var shineBrush = new SolidBrush(new HSBColor(1 / 3f, 1, .9f));
-      var briBack = new SolidBrush(new HSBColor(1 / 3f, 1, .7f));
-      var drkBack = new SolidBrush(new HSBColor(1 / 3f, 1, .3f));
-      var whiteBrush = new SolidBrush(Color.White);
+      var hue = GetHue();
+      var shineBrush = new SolidBrush(new HSBColor(hue, 1, .9f));
+      var briBack = new SolidBrush(new HSBColor(hue, 1, .5f));
+      var drkBack = new SolidBrush(new HSBColor(hue, 1, .3f));
       var shinePen = new Pen(shineBrush, 3) { LineJoin = LineJoin.Round };
-      var darkPen = new Pen(drkBack, 3) { LineJoin = LineJoin.Bevel };
       #endregion
 
       #region Draw background
@@ -149,7 +151,7 @@ namespace SuperNGon
       g.FillPolygon(drkBack, GetFan(1));
       if (Side % 2 == 1)
       {
-        var midBack = new SolidBrush(new HSBColor(1 / 3f, 1, .5f));
+        var midBack = new SolidBrush(new HSBColor(hue, 1, .4f));
         g.FillPolygon(midBack, new[] {
           new PointF(),
           chordDots[chordDots.Length - 2],
@@ -165,18 +167,27 @@ namespace SuperNGon
         // Charge obstacles
         var pt = new PointF(0, -1).Rotate(i * angle);
         float sum = 0;
+        bool filled = false;
         foreach (var wall in Walls)
         {
           sum += wall.Length;
-          if (!wall.Exist[Side]) continue;
-          var upside = new PointF(pt.X * sum, pt.Y * sum);
+          if (wall.Exist[i] == filled) continue;
+          var outside = new PointF(pt.X * sum, pt.Y * sum);
+          walls.Add(outside.Rotate(angle));
+          walls.Add(outside);
           walls.Add(new PointF());
-          walls.Add(upside);
-          walls.Add(upside.Rotate(angle));
+          var prev = sum - wall.Length;
+          var inside = new PointF(pt.X * prev, pt.Y * prev);
+          walls.Add(inside.Rotate(angle));
+          walls.Add(inside);
+          walls.Add(new PointF());
         }
       }
       if (walls.Count > 0)
+      {
+        walls.Reverse();
         g.FillPolygon(shineBrush, walls.ToArray());
+      }
       #endregion
 
       #region Draw center polygon
@@ -224,35 +235,46 @@ namespace SuperNGon
     }
 
     [DllImport("USER32.dll")]
-    static extern short GetKeyState(Keys nVirtKey);
+    static extern short GetAsyncKeyState(Keys vKey);
 
     async void DoGame()
     {
       var r = new Random();
       var token = Cancellation.Token;
       var rotTime = DateTime.Now;
-      var branch = new int[Side];
+      int hole = CursorIdx;
 
       // Insert starting term relax
       var firstWall = Walls.Dequeue();
       firstWall.Length = 900;
+      firstWall.Exist = Enumerable.Repeat(false, 100).ToArray();
       Walls.Enqueue(firstWall);
 
+      bool relax = false;
       while (!token.IsCancellationRequested)
       {
-        // Recycle and move walls
+        // Move and recycle walls
+        Walls.Peek().Length -= 10;
         while (Walls.Peek().Length <= 0)
         {
+          relax = !relax;
           var recycle = Walls.Dequeue();
-          recycle.Length = (float)r.NextDouble() * 400 + 100;
+          recycle.Length = (float)r.NextDouble() * 100 + 100;
+          var wall = recycle.Exist;
+          for (int i = 0; i < Side; i++)
+            wall[i] = relax ? false : r.Next(2) == 1;
+          wall[hole] = false;
+          int lmost = hole, rmost = hole;
+          while (!wall[(--lmost + Side) % Side] && lmost > hole - Side) ;
+          while (!wall[++rmost % Side] && rmost < hole + Side) ;
+          hole = (r.Next(lmost + 1, rmost) + Side) % Side;
           Walls.Enqueue(recycle);
         }
-        Walls.Peek().Length -= 20;
 
         // Move cursor and test collision
-        if ((GetKeyState(Keys.Left) & 0x8000) != 0)
+        if ((GetAsyncKeyState(Keys.Left) & 0x8000) != 0)
           CursorAngle = (CursorAngle + 350) % 360;
-        if ((GetKeyState(Keys.Right) & 0x8000) != 0)
+        if ((GetAsyncKeyState(Keys.Right) & 0x8000) != 0)
           CursorAngle = (CursorAngle + 10) % 360;
         if (IsColliding()) break;
 
@@ -272,6 +294,13 @@ namespace SuperNGon
             return e * e;
           };
           rotTime = flag + TimeSpan.FromSeconds(r.Next(5, 10));
+          var pastHue = GetHue();
+          var nextHue = (float)r.NextDouble();
+          GetHue = () => {
+            var ratio = Math.Min(1, (float)(DateTime.Now - flag).TotalSeconds / 1.5f);
+            if (ratio == 1) GetHue = () => nextHue;
+            return pastHue * (1 - ratio) + nextHue * ratio;
+          };
         }
 
         // Update
@@ -285,8 +314,8 @@ namespace SuperNGon
       if (Record < Last) Record = Last;
       Invalidate();
       MessageBox.Show($"기록: {Last}");
-      Game = null;
       SideNumPreparation();
+      Game = null;
       Invalidate();
     }
 
@@ -298,7 +327,7 @@ namespace SuperNGon
       foreach (var wall in Walls)
       {
         radius += wall.Length;
-        if (radius > 130) return wall.Exist[CursorIdx];
+        if (radius > 120) return wall.Exist[CursorIdx];
       }
       return false;
     }
