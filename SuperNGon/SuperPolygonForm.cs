@@ -90,12 +90,12 @@ namespace SuperNGon
         elapsed > Record
         ? Color.Red
         : Color.Black);
-      var rankString = string.Format("NEW RECORD: {0:f2}",
-        elapsed > Record ? elapsed.TotalSeconds : Record.TotalSeconds); ;
-      g.DrawString(rankString, gothic, meterBrush, 100, -370);
-      var recordString = string.Format("RECORD: {0:f2}",
+      var rightAlign = new StringFormat() { Alignment = StringAlignment.Far };
+      var meterRect = new RectangleF(0, -370, 630, 300);
+      var meterString = string.Format("NEW RECORD: {0:f2}\nRECORD: {1:f2}",
+        elapsed > Record ? elapsed.TotalSeconds : Record.TotalSeconds,
         Game == null ? Last.TotalSeconds : elapsed.TotalSeconds);
-      g.DrawString(recordString, gothic, meterBrush, 248, -310);
+      g.DrawString(meterString, gothic, meterBrush, meterRect, rightAlign);
       if (Game == null)
       {
         g.DrawString("PRESS SPACE TO START", gothic, new SolidBrush(Color.Black), -340, 290);
